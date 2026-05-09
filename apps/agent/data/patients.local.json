@@ -1,0 +1,38 @@
+[
+  {
+    "id": "e93ab23a-f01b-410f-8c3b-74d39e763001",
+    "name": "Jane Miller",
+    "phone": "+1 555-0199",
+    "language": "English",
+    "triage_status": "RED",
+    "symptoms": "High fever, shortness of breath, chest tightness",
+    "medications": ["Amoxicillin", "Atorvastatin"],
+    "call_transcript": "Patient stated: 'I've been having a lot of trouble catching my breath since yesterday... it feels tight, and my temperature is 102.'",
+    "doctor_notes": "Needs immediate specialist consultation if temperature runs above 101.5.",
+    "submitted_at": "2026-05-09T08:00:00.000Z"
+  },
+  {
+    "id": "782f1b4c-9f01-46ab-a2bb-187de5b1a302",
+    "name": "Rajiv Patel",
+    "phone": "+1 555-0245",
+    "language": "English",
+    "triage_status": "YELLOW",
+    "symptoms": "Mild dizziness on standing up, slight fatigue",
+    "medications": ["Metoprolol", "Aspirin"],
+    "call_transcript": "Patient reported feeling a little light-headed when standing up too fast, but otherwise okay.",
+    "doctor_notes": "Monitor blood pressure. Potential medication side-effect.",
+    "submitted_at": "2026-05-09T07:30:00.000Z"
+  },
+  {
+    "id": "c305a41d-d421-4f1e-9273-0d2e8bfa1703",
+    "name": "Maria Garcia",
+    "phone": "+1 555-0811",
+    "language": "Spanish",
+    "triage_status": "GREEN",
+    "symptoms": "None",
+    "medications": ["Lisinopril"],
+    "call_transcript": "Patient reports completing the prescribed physical therapy routine. Pain is at a 1/10.",
+    "doctor_notes": "Continue current recovery track. Standard follow-up scheduled for next week.",
+    "submitted_at": "2026-05-08T18:15:00.000Z"
+  }
+]

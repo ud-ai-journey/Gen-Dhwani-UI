@@ -1,23 +1,27 @@
 import { MCPServer, text, widget } from "mcp-use/server";
 import { z } from "zod";
+import { Client } from "@notionhq/client";
 import {
-  leadSchema,
+  patientSchema,
   segmentSchema,
-  type Lead,
+  type Patient,
   type Segment,
-} from "./src/lib/leads/types";
-import { topWorkshop } from "./src/lib/leads/derive";
-import { SAMPLE_LEADS, SAMPLE_SEGMENTS } from "./src/lib/leads/sample";
+} from "./src/lib/patients/types";
+
+const notion = new Client({
+  auth: process.env.NOTION_TOKEN,
+});
+const databaseId = process.env.NOTION_PATIENTS_DATABASE_ID;
 
 const server = new MCPServer({
-  name: "hackathon-mcp",
-  title: "hackathon-mcp",
+  name: "dhwani-mcp",
+  title: "dhwani-mcp",
   version: "1.0.0",
   description:
-    "Workshop Lead Triage — visual MCP widgets for the Notion-sourced workshop leads canvas: list, demand, pipeline, dashboard (stats + donut + bars), and a HITL email-draft card.",
+    "Dhwani GenUI — visual MCP widgets for the Notion-sourced patient triage canvas: list, demand, dashboard.",
   baseUrl: process.env.MCP_URL || "http://localhost:3011",
   favicon: "favicon.ico",
-  websiteUrl: "https://mcp-use.com",
+  websiteUrl: "https://dhwanigenui.com",
   icons: [
     {
       src: "icon.svg",
@@ -27,16 +31,12 @@ const server = new MCPServer({
   ],
 });
 
-// Shared input schema. All three tools accept an optional `leads` array (and
-// `segments`, where applicable). When omitted or empty, the widget falls back
-// to the sample dataset baked into `src/lib/leads/sample.ts` so the views can
-// be demoed inside ChatGPT/Claude without a backing fetch.
-const leadsInput = z.object({
-  leads: z
-    .array(leadSchema)
+const patientsInput = z.object({
+  patients: z
+    .array(patientSchema)
     .default([])
     .describe(
-      "Lead rows. Omit or pass an empty array to render with the sample dataset.",
+      "Patient rows. Omit or pass an empty array to render placeholders.",
     ),
   segments: z
     .array(segmentSchema)
@@ -44,196 +44,133 @@ const leadsInput = z.object({
     .describe("Optional segments for colored dots."),
 });
 
-function pickLeads(input: { leads: Lead[] }): Lead[] {
-  return input.leads.length ? input.leads : SAMPLE_LEADS;
-}
-
-function pickSegments(input: { segments: Segment[] }): Segment[] {
-  return input.segments.length ? input.segments : SAMPLE_SEGMENTS;
-}
-
-function summarize(leads: Lead[], view: string): string {
-  const top = topWorkshop(leads);
-  const tail = top ? ` Top demand: ${top}.` : "";
-  return `Rendered the ${view} view for ${leads.length} leads.${tail}`;
+function pickPatients(input: { patients: Patient[] }): Patient[] {
+  return input.patients.length ? input.patients : [];
 }
 
 server.tool(
   {
-    name: "show-lead-list",
+    name: "show-patient-list",
     description:
-      "Render the workshop lead triage *list* view (KPI tiles + table of leads).",
-    schema: leadsInput,
+      "Render the patient triage *list* view (KPI tiles + table of patients).",
+    schema: patientsInput,
     widget: {
-      name: "lead-list",
-      invoking: "Loading leads…",
+      name: "patient-list",
+      invoking: "Loading patients…",
       invoked: "List ready",
     },
   },
   async (input) => {
-    const leads = pickLeads(input);
-    const segments = pickSegments(input);
+    const patients = pickPatients(input);
     return widget({
-      props: { leads, segments },
-      output: text(summarize(leads, "list")),
+      props: { patients },
+      output: text(`Rendered the list view for ${patients.length} patients.`),
     });
   },
 );
 
 server.tool(
   {
-    name: "show-lead-demand",
-    description:
-      "Render the workshop lead triage *demand* view (workshop bars, technical-level donut, tool usage).",
-    schema: leadsInput.pick({ leads: true }),
+    name: "add-patient",
+    description: "Add a new patient to the EMR system.",
+    schema: patientSchema.omit({ id: true, "Last Updated": true }),
     widget: {
-      name: "lead-demand",
-      invoking: "Aggregating leads…",
-      invoked: "Demand ready",
+      name: "patient-add-form",
+      invoking: "Adding new patient…",
+      invoked: "Patient added",
     },
   },
   async (input) => {
-    const leads = pickLeads(input);
-    return widget({
-      props: { leads },
-      output: text(summarize(leads, "demand")),
-    });
+    if (!databaseId) throw new Error("NOTION_PATIENTS_DATABASE_ID is not set.");
+    try {
+      const response = await notion.pages.create({
+        parent: { database_id: databaseId },
+        properties: {
+          Name: { title: [{ text: { content: input.Name } }] },
+          Phone: { phone_number: input.Phone },
+          Language: { select: { name: input.Language } },
+          "Triage Status": { select: { name: input["Triage Status"] } },
+          // Optional fields mapping omitted for brevity, but you can fill them out:
+          ...(input.Diagnosis ? { Diagnosis: { rich_text: [{ text: { content: input.Diagnosis } }] } } : {}),
+          ...(input.Medications ? { Medications: { rich_text: [{ text: { content: input.Medications } }] } } : {}),
+          ...(input["Warning Signs"] ? { "Warning Signs": { rich_text: [{ text: { content: input["Warning Signs"] } }] } } : {}),
+          ...(input["Doctor Notes"] ? { "Doctor Notes": { rich_text: [{ text: { content: input["Doctor Notes"] } }] } } : {}),
+        },
+      });
+      return widget({
+        props: { patient: input, responseId: response.id },
+        output: text(`Patient ${input.Name} added successfully.`),
+      });
+    } catch (e: any) {
+      return text(`Failed to add patient: ${e.message}`);
+    }
   },
 );
 
 server.tool(
   {
-    name: "show-lead-pipeline",
-    description:
-      "Render the workshop lead triage *pipeline* view (kanban columns by status, read-only).",
-    schema: leadsInput,
-    widget: {
-      name: "lead-pipeline",
-      invoking: "Loading pipeline…",
-      invoked: "Pipeline ready",
-    },
-  },
-  async (input) => {
-    const leads = pickLeads(input);
-    const segments = pickSegments(input);
-    return widget({
-      props: { leads, segments },
-      output: text(summarize(leads, "pipeline")),
-    });
-  },
-);
-
-server.tool(
-  {
-    name: "show-canvas-dashboard",
-    description:
-      "Render the Workshop Lead Triage canvas dashboard: 4 quick-stat tiles + status donut + workshop-demand bars. Mirrors the layout above the kanban in the Next.js canvas.",
-    schema: leadsInput.pick({ leads: true }),
-    widget: {
-      name: "canvas-dashboard",
-      invoking: "Aggregating leads…",
-      invoked: "Dashboard ready",
-    },
-  },
-  async (input) => {
-    const leads = pickLeads(input);
-    return widget({
-      props: { leads },
-      output: text(summarize(leads, "dashboard")),
-    });
-  },
-);
-
-// Sample draft used when the inspector calls show-email-draft with no
-// arguments. Mirrors the SAMPLE_LEADS fallback the other widgets use so the
-// widget renders cleanly out of the box.
-const SAMPLE_DRAFT = {
-  leadId: "sample-ada-lovelace",
-  leadName: "Ada Lovelace",
-  leadEmail: "ada.lovelace@example.com",
-  leadCompany: "Mango Labs",
-  leadRole: "Founder",
-  subject: "Following up on your Agentic UI workshop interest",
-  body:
-    "Hi Ada,\n\n" +
-    "Thanks for signing up for the Agentic UI (AG-UI) workshop — your background at Mango Labs is exactly the profile we're building the curriculum for.\n\n" +
-    "A quick question before we lock the date: are there one or two specific patterns (state sync, tool gating, HITL) you're hoping we cover?\n\n" +
-    "Best,\nWorkshop team",
-};
-
-server.tool(
-  {
-    name: "show-email-draft",
-    description:
-      "Render a human-in-the-loop email draft for a single lead. Subject and body are editable in place; clicking Send calls post-email-comment to persist the message as a Notion comment. Defaults to a sample draft when called with no arguments.",
+    name: "update-patient-triage",
+    description: "Update the triage status of a patient.",
     schema: z.object({
-      leadId: z
-        .string()
-        .default(SAMPLE_DRAFT.leadId)
-        .describe("Notion page id of the lead to email."),
-      leadName: z.string().default(SAMPLE_DRAFT.leadName).optional(),
-      leadEmail: z.string().default(SAMPLE_DRAFT.leadEmail).optional(),
-      leadCompany: z.string().default(SAMPLE_DRAFT.leadCompany).optional(),
-      leadRole: z.string().default(SAMPLE_DRAFT.leadRole).optional(),
-      subject: z
-        .string()
-        .default(SAMPLE_DRAFT.subject)
-        .describe("Initial subject line — user may edit before sending."),
-      body: z
-        .string()
-        .default(SAMPLE_DRAFT.body)
-        .describe("Initial email body — user may edit before sending."),
+      id: z.string(),
+      "Triage Status": z.enum(["GREEN", "YELLOW", "RED"]),
     }),
     widget: {
-      name: "email-draft",
-      invoking: "Drafting email…",
-      invoked: "Draft ready",
+      name: "patient-triage-update",
+      invoking: "Updating triage status…",
+      invoked: "Triage status updated",
     },
   },
   async (input) => {
-    const props = {
-      ...SAMPLE_DRAFT,
-      ...input,
-    };
-    return widget({
-      props,
-      output: text(
-        `Drafted an email to ${props.leadName ?? props.leadEmail ?? props.leadId}: ${props.subject}`,
-      ),
-    });
+    if (!databaseId) throw new Error("NOTION_PATIENTS_DATABASE_ID is not set.");
+    try {
+      await notion.pages.update({
+        page_id: input.id,
+        properties: {
+          "Triage Status": { select: { name: input["Triage Status"] } },
+        },
+      });
+      return widget({
+        props: { patientId: input.id, status: input["Triage Status"] },
+        output: text(`Patient ${input.id} triage status updated to ${input["Triage Status"]}.`),
+      });
+    } catch (e: any) {
+      return text(`Failed to update patient triage status: ${e.message}`);
+    }
   },
 );
 
 server.tool(
   {
-    name: "post-email-comment",
-    description:
-      "Post an APPROVED email draft as a comment on the lead's Notion page. Called by the email-draft widget when the user clicks Send. Returns a confirmation message. Defaults to the sample draft when called with no arguments.",
+    name: "review-discharge-summary",
+    description: "Render a form for the doctor to review automatically extracted patient data before saving to the EMR.",
     schema: z.object({
-      leadId: z
-        .string()
-        .default(SAMPLE_DRAFT.leadId)
-        .describe("Notion page id of the lead."),
-      subject: z
-        .string()
-        .default(SAMPLE_DRAFT.subject)
-        .describe("Final subject line, after the user's edits."),
-      body: z
-        .string()
-        .default(SAMPLE_DRAFT.body)
-        .describe("Final email body, after the user's edits."),
+      extractedData: z.object({
+        Name: z.string(),
+        Phone: z.string().optional().default(""),
+        Language: z.string().optional().default("English"),
+        "Triage Status": z.enum(["GREEN", "YELLOW", "RED"]).optional().default("GREEN"),
+        Diagnosis: z.string().optional().default(""),
+        Medications: z.string().optional().default(""),
+        "Warning Signs": z.string().optional().default(""),
+        "Doctor Notes": z.string().optional().default("")
+      }).describe("Data automatically extracted from the discharge summary.")
     }),
+    widget: {
+      name: "discharge-review",
+      invoking: "Formatting discharge review…",
+      invoked: "Discharge review ready",
+    },
   },
-  async ({ leadId, subject, body: _body }) => {
-    // Mock-only in this MCP demo. The same shape ships in the Next.js
-    // canvas's post_lead_comment LangChain tool, which posts to Notion via
-    // @notionhq/notion-mcp-server. Wire that server here when running
-    // against a live workspace.
-    return text(
-      `Posted email comment on lead ${leadId}: "${subject}"`,
-    );
+  async (input) => {
+    return widget({
+      props: input,
+      output: text(`Presented discharge review form for patient ${input.extractedData.Name}.`),
+    });
   },
 );
+
+// Omitted email tools for now as they are not explicitly in the Patient spec, but can be reimplemented if needed.
 
 server.listen().then(() => {
   console.log("MCP server running on port 3011");

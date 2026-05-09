@@ -57,7 +57,7 @@ load_dotenv()
 
 
 @tool
-def fetch_notion_leads(
+def fetch_notion_patients(
     database_id: Annotated[
         str,
         "Notion database ID. Pass an empty string to use NOTION_LEADS_DATABASE_ID from env, or to use the bundled local store when Notion isn't configured.",
@@ -104,35 +104,31 @@ def fetch_notion_leads(
             )
 
         # Compute the summary the model would otherwise have to compute itself.
-        workshop_counts = Counter(
-            (r.get("workshop") or "Not sure yet") for r in rows
+        triage_counts = Counter(
+            (r.get("triage_status") or "UNKNOWN") for r in rows
         )
-        top_workshop, top_count = (
-            workshop_counts.most_common(1)[0] if workshop_counts else ("Not sure yet", 0)
-        )
-        opt_in_count = sum(1 for r in rows if r.get("opt_in"))
+        red_count = triage_counts.get("RED", 0)
 
         db_title = store.database_title()
         source_label = "local starter data" if store.is_local() else "Notion"
 
         summary = (
-            f"Imported {len(rows)} leads from {source_label}. "
-            f"Top demand: {top_workshop} ({top_count} signups). "
-            f"Opt-in: {opt_in_count}/{len(rows)}."
+            f"Imported {len(rows)} patients from {source_label}. "
+            f"Critical (RED): {red_count} patients."
         )
 
         update: dict[str, Any] = {
-            "leads": rows,
+            "patients": rows,
             "header": {
-                "title": "Workshop Lead Triage",
-                "subtitle": f"{len(rows)} leads from {source_label} · top demand: {top_workshop}",
+                "title": "Dhwani GenUI Triage",
+                "subtitle": f"{len(rows)} patients from {source_label} · RED: {red_count}",
             },
             "sync": {
                 # `databaseId` stays Notion-flavored on Notion, blank on
                 # local — the frontend doesn't currently use it for
                 # routing, so the asymmetry is harmless.
                 "databaseId": database_id
-                or os.getenv("NOTION_LEADS_DATABASE_ID", "")
+                or os.getenv("NOTION_PATIENTS_DATABASE_ID", "")
                 or "local",
                 "databaseTitle": db_title,
                 "syncedAt": datetime.now(timezone.utc).isoformat(),
@@ -154,15 +150,15 @@ def fetch_notion_leads(
 
 
 @tool
-def find_lead(
+def find_patient(
     query: Annotated[
         str,
-        "A name (or partial name) to look up in state.leads. Case-insensitive. "
+        "A name (or partial name) to look up in state.patients. Case-insensitive. "
         "Examples: 'ethan moore', 'ethan', 'moore', 'Devon'.",
     ],
     state: Annotated[Dict[str, Any], InjectedState] = None,
 ) -> str:
-    """Look up the real lead id for a name from state.leads.
+    """Look up the real patient id for a name from state.patients.
 
     Use this BEFORE calling selectLead / update_notion_lead /
     commitLeadEdit / renderLeadMiniCard when you only have a name. NEVER
@@ -177,15 +173,15 @@ def find_lead(
       - on no match: {"matches": [], "hint": "no leads matched <query>"}
       - on empty state: {"error": "no leads loaded — call fetch_notion_leads first"}
     """
-    leads_raw = (state or {}).get("leads") or []
-    leads: List[Dict[str, Any]] = [
-        l for l in leads_raw if isinstance(l, dict) and l.get("id")
+    patients_raw = (state or {}).get("patients") or []
+    patients: List[Dict[str, Any]] = [
+        l for l in patients_raw if isinstance(l, dict) and l.get("id")
     ]
-    if not leads:
+    if not patients:
         return json.dumps(
             {
                 "error": (
-                    "no leads loaded — call fetch_notion_leads(database_id='') "
+                    "no patients loaded — call fetch_notion_patients(database_id='') "
                     "first, then retry."
                 )
             }
@@ -198,8 +194,8 @@ def find_lead(
     # Score: exact name = 3, full-name contains query = 2, any token starts with
     # query = 1, otherwise 0. Tie-broken by which appears earlier in state.leads.
     scored: list[tuple[int, int, Dict[str, Any]]] = []
-    for idx, lead in enumerate(leads):
-        name = str(lead.get("name") or "").lower()
+    for idx, patient in enumerate(patients):
+        name = str(patient.get("name") or "").lower()
         if not name:
             continue
         if name == q:
@@ -211,7 +207,7 @@ def find_lead(
         else:
             score = 0
         if score > 0:
-            scored.append((score, -idx, lead))
+            scored.append((score, -idx, patient))
 
     if not scored:
         return json.dumps(
@@ -229,9 +225,8 @@ def find_lead(
         return {
             "id": l.get("id"),
             "name": l.get("name"),
-            "role": l.get("role"),
-            "company": l.get("company"),
-            "email": l.get("email"),
+            "phone": l.get("phone"),
+            "triage_status": l.get("triage_status"),
         }
 
     if len(best) == 1:
@@ -335,18 +330,18 @@ def _summarize_patch(patch: Dict[str, Any]) -> str:
 
 
 @tool
-def update_notion_lead(
-    lead_id: Annotated[str, "Notion page id of the lead row to patch."],
+def update_notion_patient(
+    patient_id: Annotated[str, "Notion page id of the patient row to patch."],
     patch: Annotated[
         Dict[str, Any],
-        "Partial Lead. Keys match the Lead shape (workshop / technical_level / "
-        "opt_in / etc.). Only include the fields that change. id and url are "
+        "Partial Patient. Keys match the Patient shape (triage_status / symptoms / "
+        "doctor_notes / etc.). Only include the fields that change. id and url are "
         "ignored.",
     ],
     tool_call_id: Annotated[str, InjectedToolCallId] = "",
     state: Annotated[Dict[str, Any], InjectedState] = None,
 ) -> Command:
-    """Update a single lead in the active store and apply the patch to canvas state.
+    """Update a single patient in the active store and apply the patch to canvas state.
 
     The active store is Notion when configured, the local JSON cache
     otherwise — the agent doesn't need to branch on which one it is.
@@ -363,12 +358,12 @@ def update_notion_lead(
     try:
         from .lead_store import get_store
 
-        if not lead_id:
+        if not patient_id:
             return Command(
                 update={
                     "messages": [
                         ToolMessage(
-                            content="Update failed: lead_id is required.",
+                            content="Update failed: patient_id is required.",
                             tool_call_id=tool_call_id,
                         )
                     ],
@@ -376,10 +371,10 @@ def update_notion_lead(
             )
 
         store = get_store()
-        merged = store.update_lead(lead_id, patch or {})
+        merged = store.update_lead(patient_id, patch or {})
         if merged is None:
             store_hint = (
-                "Local store: lead_id may be stale. Re-import to refresh."
+                "Local store: patient_id may be stale. Re-import to refresh."
                 if store.is_local()
                 else (
                     "Notion call errored. Check NOTION_TOKEN and that the "
@@ -390,34 +385,32 @@ def update_notion_lead(
                 update={
                     "messages": [
                         ToolMessage(
-                            content=f"Update failed for lead {lead_id}: {store_hint}",
+                            content=f"Update failed for patient {patient_id}: {store_hint}",
                             tool_call_id=tool_call_id,
                         )
                     ],
                 }
             )
 
-        # Patch the leads list in-place from the agent's current state snapshot.
-        current: List[Dict[str, Any]] = list((state or {}).get("leads", []) or [])
-        new_leads: List[Dict[str, Any]] = []
+        # Patch the patients list in-place from the agent's current state snapshot.
+        current: List[Dict[str, Any]] = list((state or {}).get("patients", []) or [])
+        new_patients: List[Dict[str, Any]] = []
         replaced = False
-        for lead in current:
-            if isinstance(lead, dict) and lead.get("id") == lead_id:
-                new_leads.append({**lead, **(patch or {}), **merged, "id": lead_id})
+        for patient in current:
+            if isinstance(patient, dict) and patient.get("id") == patient_id:
+                new_patients.append({**patient, **(patch or {}), **merged, "id": patient_id})
                 replaced = True
             else:
-                new_leads.append(lead)
+                new_patients.append(patient)
         if not replaced:
-            # Lead wasn't in the agent's snapshot (maybe canvas wasn't imported
-            # yet, or this id is stale). Append it so the canvas at least
-            # surfaces the row that was just edited.
-            new_leads.append({**(merged or {}), "id": lead_id})
+            # Patient wasn't in the agent's snapshot
+            new_patients.append({**(merged or {}), "id": patient_id})
 
-        display_name = (merged or {}).get("name") or "lead"
+        display_name = (merged or {}).get("name") or "patient"
         summary = _summarize_patch(patch or {})
         return Command(
             update={
-                "leads": new_leads,
+                "patients": new_patients,
                 "messages": [
                     ToolMessage(
                         content=f"Updated {display_name}: {summary}.",
@@ -431,7 +424,7 @@ def update_notion_lead(
             update={
                 "messages": [
                     ToolMessage(
-                        content=f"Update failed for lead {lead_id}: {e}",
+                        content=f"Update failed for patient {patient_id}: {e}",
                         tool_call_id=tool_call_id,
                     )
                 ],
@@ -440,17 +433,17 @@ def update_notion_lead(
 
 
 @tool
-def insert_notion_lead(
-    lead: Annotated[
+def insert_notion_patient(
+    patient: Annotated[
         Dict[str, Any],
-        "Full Lead dict (name, company, email, role, technical_level, "
-        "interested_in, tools, workshop, opt_in, message, …). id/url are "
+        "Full Patient dict (name, phone, language, symptoms, medications, "
+        "triage_status, etc.). id/url are "
         "ignored — Notion assigns them.",
     ],
     tool_call_id: Annotated[str, InjectedToolCallId] = "",
     state: Annotated[Dict[str, Any], InjectedState] = None,
 ) -> Command:
-    """Create a new lead row in the active store and append it to canvas state.
+    """Create a new patient row in the active store and append it to canvas state.
 
     Mirror of `update_notion_lead` for creates. Routes through the same
     `LeadStore` so it works for both Notion and the local fallback.
@@ -462,8 +455,8 @@ def insert_notion_lead(
         from .lead_store import get_store
 
         store = get_store()
-        new_lead = store.insert_lead(lead or {})
-        if new_lead is None:
+        new_patient = store.insert_lead(patient or {})
+        if new_patient is None:
             store_hint = (
                 "Local store write failed — check that agent/data is writable."
                 if store.is_local()
@@ -484,19 +477,19 @@ def insert_notion_lead(
                 }
             )
 
-        current: List[Dict[str, Any]] = list((state or {}).get("leads", []) or [])
-        new_leads = current + [new_lead]
+        current: List[Dict[str, Any]] = list((state or {}).get("patients", []) or [])
+        new_patients = current + [new_patient]
 
-        display_name = new_lead.get("name") or "(unnamed)"
+        display_name = new_patient.get("name") or "(unnamed)"
         source_label = "local store" if store.is_local() else "Notion"
         return Command(
             update={
-                "leads": new_leads,
+                "patients": new_patients,
                 "messages": [
                     ToolMessage(
                         content=(
                             f"Added {display_name} to {source_label} "
-                            f"({new_lead.get('id', '')})."
+                            f"({new_patient.get('id', '')})."
                         ),
                         tool_call_id=tool_call_id,
                     )
@@ -591,12 +584,12 @@ def load_notion_tools() -> List[Any]:
     `NOTION_LEADS_DATABASE_ID` (read by the tools themselves).
     """
     tools: List[Any] = [
-        fetch_notion_leads,
-        find_lead,
+        fetch_notion_patients,
+        find_patient,
         default_notion_database_id,
         notion_health_check,
-        update_notion_lead,
-        insert_notion_lead,
+        update_notion_patient,
+        insert_notion_patient,
         post_lead_comment,
     ]
     print(f"Backend tools loaded: {len(tools)} tools")
