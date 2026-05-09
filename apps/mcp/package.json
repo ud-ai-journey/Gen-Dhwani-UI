@@ -28,6 +28,7 @@
     "postinstall": "mcp-use generate-types || true"
   },
   "dependencies": {
+    "@notionhq/client": "^3.14.0",
     "@openai/apps-sdk-ui": "^0.2.1",
     "mcp-use": "latest",
     "react": "^19.2.4",
