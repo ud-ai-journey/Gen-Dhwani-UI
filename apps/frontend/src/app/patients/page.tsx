@@ -346,7 +346,13 @@ function CanvasInner() {
       name: z.string(),
       summary: z.string().describe("Why this patient is critical"),
     }),
-    render: (props) => <RedTriageCard {...props} />,
+    render: ({ args }) => (
+      <RedTriageCard
+        patientId={args.patientId ?? ""}
+        name={args.name ?? ""}
+        summary={args.summary ?? ""}
+      />
+    ),
   });
 
   useFrontendTool({
@@ -357,7 +363,13 @@ function CanvasInner() {
       name: z.string(),
       summary: z.string().describe("Why this patient needs monitoring"),
     }),
-    render: (props) => <YellowTriageCard {...props} />,
+    render: ({ args }) => (
+      <YellowTriageCard
+        patientId={args.patientId ?? ""}
+        name={args.name ?? ""}
+        summary={args.summary ?? ""}
+      />
+    ),
   });
 
   useFrontendTool({
@@ -368,7 +380,13 @@ function CanvasInner() {
       name: z.string(),
       summary: z.string().describe("Status of this stable patient"),
     }),
-    render: (props) => <GreenTriageCard {...props} />,
+    render: ({ args }) => (
+      <GreenTriageCard
+        patientId={args.patientId ?? ""}
+        name={args.name ?? ""}
+        summary={args.summary ?? ""}
+      />
+    ),
   });
 
   // Watch agent tool messages to confirm/revert pending optimistic writes.
